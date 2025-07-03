@@ -18,6 +18,7 @@
 import os
 import warnings
 import shutil
+import gc
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BitsAndBytesConfig
@@ -151,10 +152,6 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
                         model_base, low_cpu_mem_usage=True, 
                         attn_implementation=attn_implementation, config=llava_cfg, **kwargs
                     )
-        else:
-            # Standard model loading for non-multimodal models
-            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
-            rank0_print("Loading speech-only LLaVA from base model...")
 
             # Handle token embeddings
             token_num, token_dim = model.lm_head.out_features, model.lm_head.in_features
