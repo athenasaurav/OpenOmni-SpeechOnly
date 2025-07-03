@@ -153,7 +153,11 @@ class Conversation:
                         ret += ""
 
         elif self.sep_style == SeparatorStyle.LLAMA_3:
-            chat_template = self.tokenizer.chat_template
+            # FIXED: Handle None tokenizer case
+            chat_template = None
+            if self.tokenizer is not None:
+                chat_template = self.tokenizer.chat_template
+                
             if chat_template is not None:
                 encodeds = []
                 for i, (role, message) in enumerate(messages):
@@ -183,7 +187,16 @@ class Conversation:
                         ret += f"<|start_header_id|>{role}<|end_header_id|>\n\n"
 
         elif self.sep_style == SeparatorStyle.QWEN:
-            ret = "" if self.system == "" else self.system + self.tokenizer.im_end + "\n"
+            # FIXED: Handle None tokenizer case
+            if self.tokenizer is not None:
+                im_start = self.tokenizer.im_start
+                im_end = self.tokenizer.im_end
+            else:
+                # Fallback tokens when tokenizer is None
+                im_start = "<|im_start|>"
+                im_end = "<|im_end|>"
+                
+            ret = "" if self.system == "" else self.system + im_end + "\n"
             for i, (role, message) in enumerate(messages):
                 if message:
                     # FIXED: Handle speech-only message format properly
@@ -193,9 +206,9 @@ class Conversation:
                             message = message[0]  # Get text part
                         else:
                             message = str(message[0]) if message else ""
-                    ret += self.tokenizer.im_start + role + "\n" + message + self.tokenizer.im_end + "\n"
+                    ret += im_start + role + "\n" + message + im_end + "\n"
                 else:
-                    ret += self.tokenizer.im_start + role + "\n"
+                    ret += im_start + role + "\n"
 
         elif self.sep_style == SeparatorStyle.GEMMA:
             ret = ""
