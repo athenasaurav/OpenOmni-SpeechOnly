@@ -55,6 +55,24 @@ def transition_attention_mask_pt(b, h, q_idx, kv_idx, prefix_length, channel, de
 
 class LlavaS2SQwenConfig(Qwen2Config):
     model_type = "llava_s2s_qwen"
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        
+        # Speech encoder configuration
+        self.speech_encoder = getattr(self, 'speech_encoder', 'whisper')
+        self.speech_encoder_type = getattr(self, 'speech_encoder_type', 'whisper')
+        
+        # Speech projector configuration  
+        self.speech_projector_type = getattr(self, 'speech_projector_type', 'linear')
+        
+        # Speech generator configuration
+        self.speech_generator_type = getattr(self, 'speech_generator_type', 'ctc')
+        
+        # Speech-specific parameters
+        self.speech_hidden_size = getattr(self, 'speech_hidden_size', 1024)
+        self.speech_select_layer = getattr(self, 'speech_select_layer', -1)
+        self.speech_select_feature = getattr(self, 'speech_select_feature', 'hidden_states')
 
 
 class LlavaS2SQwenForCausalLM(LlavaQwenForCausalLM, GenerationWithCTC):
