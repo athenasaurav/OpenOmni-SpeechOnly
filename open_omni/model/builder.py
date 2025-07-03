@@ -12,12 +12,8 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
-"""
-Optimized Speech-Only Model Builder
-- Removed vision processing for reduced latency
-- Streamlined speech-only model loading
-- Memory optimizations for speech pipeline
-"""
+# OPTIMIZED FOR SPEECH-TO-SPEECH ONLY
+# Removed all vision components for reduced latency and memory usage
 
 import os
 import warnings
@@ -26,7 +22,25 @@ import gc
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BitsAndBytesConfig
-from open_omni.model import *
+
+# Import specific models instead of wildcard import to avoid loading all models
+def get_model_class(model_name):
+    """Lazy import of model classes to avoid loading all models at startup"""
+    if model_name == "llava_s2s_qwen":
+        from open_omni.model.language_model.llava_s2s_qwen import LlavaS2SQwenForCausalLM
+        return LlavaS2SQwenForCausalLM
+    elif model_name == "llava_s2s_llama":
+        from open_omni.model.language_model.llava_s2s_llama import LlavaS2SLlamaForCausalLM
+        return LlavaS2SLlamaForCausalLM
+    elif model_name == "llava_qwen":
+        from open_omni.model.language_model.llava_qwen import LlavaQwenForCausalLM
+        return LlavaQwenForCausalLM
+    elif model_name == "llava_llama":
+        from open_omni.model.language_model.llava_llama import LlavaLlamaForCausalLM
+        return LlavaLlamaForCausalLM
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
+
 from open_omni.constants import DEFAULT_SPEECH_TOKEN
 from open_omni.utils import rank0_print
 from open_omni.model.speech_encoder.builder import build_speech_encoder
@@ -80,13 +94,11 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
         
         # Handle LoRA models
         if "lora" in model_name.lower() and model_base is None:
-            warnings.warn(
-                "There is `lora` in model name but no `model_base` is provided. "
-                "If you are loading a LoRA model, please provide the `model_base` argument."
-            )
-        
-        if "lora" in model_name.lower() and model_base is not None:
-            # LoRA loading with speech-only optimizations
+            warnings.warn("LoRA model detected but no base model specified. This may cause issues.")
+
+        if model_base is not None:
+            # Loading with base model
+            rank0_print(f"Loading speech-only model with base: {model_base}")
             lora_cfg_pretrained = AutoConfig.from_pretrained(model_path)
             tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
             rank0_print("Loading speech-only LLaVA from base model...")
@@ -96,14 +108,16 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
                 if 's2s' in model_name.lower():
                     from open_omni.model.language_model.llava_s2s_qwen import LlavaS2SQwenConfig
                     lora_cfg_pretrained = LlavaS2SQwenConfig.from_pretrained(model_path)
-                    model = LlavaS2SQwenForCausalLM.from_pretrained(
+                    ModelClass = get_model_class("llava_s2s_qwen")
+                    model = ModelClass.from_pretrained(
                         model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, 
                         attn_implementation=attn_implementation, **kwargs
                     )
                 else:
                     from open_omni.model.language_model.llava_qwen import LlavaQwenConfig
                     lora_cfg_pretrained = LlavaQwenConfig.from_pretrained(model_path)
-                    model = LlavaQwenForCausalLM.from_pretrained(
+                    ModelClass = get_model_class("llava_qwen")
+                    model = ModelClass.from_pretrained(
                         model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, 
                         attn_implementation=attn_implementation, **kwargs
                     )
@@ -112,14 +126,16 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
                 if "s2s" in model_name.lower():
                     from open_omni.model.language_model.llava_s2s_llama import LlavaS2SLlamaConfig
                     lora_cfg_pretrained = LlavaS2SLlamaConfig.from_pretrained(model_path)
-                    model = LlavaS2SLlamaForCausalLM.from_pretrained(
+                    ModelClass = get_model_class("llava_s2s_llama")
+                    model = ModelClass.from_pretrained(
                         model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, 
                         attn_implementation=attn_implementation, **kwargs
                     )
                 else:
                     from open_omni.model.language_model.llava_llama import LlavaConfig
                     lora_cfg_pretrained = LlavaConfig.from_pretrained(model_path)
-                    model = LlavaLlamaForCausalLM.from_pretrained(
+                    ModelClass = get_model_class("llava_llama")
+                    model = ModelClass.from_pretrained(
                         model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, 
                         attn_implementation=attn_implementation, **kwargs
                     )
@@ -135,83 +151,28 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
                 )
 
             # Load LoRA weights
-            rank0_print("Loading additional speech-only LLaVA weights...")
+            rank0_print("Loading additional speech-only weights...")
             if os.path.exists(os.path.join(model_path, "non_lora_trainables.bin")):
                 non_lora_trainables = torch.load(
                     os.path.join(model_path, "non_lora_trainables.bin"), map_location="cpu"
                 )
-            else:
-                from huggingface_hub import hf_hub_download
-                def load_from_hf(repo_id, filename, subfolder=None):
-                    cache_file = hf_hub_download(repo_id=repo_id, filename=filename, subfolder=subfolder)
-                    return torch.load(cache_file, map_location="cpu")
-                non_lora_trainables = load_from_hf(model_path, "non_lora_trainables.bin")
-            
-            # Clean up key names
-            non_lora_trainables = {
-                (k[11:] if k.startswith("base_model.") else k): v 
-                for k, v in non_lora_trainables.items()
-            }
-            if any(k.startswith("model.model.") for k in non_lora_trainables):
                 non_lora_trainables = {
-                    (k[6:] if k.startswith("model.") else k): v 
+                    (k[11:] if k.startswith("base_model.") else k): v
                     for k, v in non_lora_trainables.items()
                 }
-            model.load_state_dict(non_lora_trainables, strict=False)
+                if any(k.startswith("model.model.") for k in non_lora_trainables):
+                    non_lora_trainables = {
+                        (k[6:] if k.startswith("model.") else k): v
+                        for k, v in non_lora_trainables.items()
+                    }
+                model.load_state_dict(non_lora_trainables, strict=False)
 
             from peft import PeftModel
             rank0_print("Loading LoRA weights...")
             model = PeftModel.from_pretrained(model, model_path)
             rank0_print("Merging LoRA weights...")
             model = model.merge_and_unload()
-            rank0_print("Speech-only model loaded successfully...")
-
-        elif model_base is not None:
-            # Base model with projector loading
-            rank0_print(f"Loading speech-only LLaVA from base model {model_base}...")
-            
-            if "qwen" in model_name.lower():
-                if 's2s' in model_name.lower():
-                    from open_omni.model.language_model.llava_s2s_qwen import LlavaS2SQwenConfig
-                    tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
-                    cfg_pretrained = LlavaS2SQwenConfig.from_pretrained(model_path)
-                    model = LlavaS2SQwenForCausalLM.from_pretrained(
-                        model_base, low_cpu_mem_usage=True, config=cfg_pretrained, 
-                        attn_implementation=attn_implementation, **kwargs
-                    )
-                else:
-                    from open_omni.model.language_model.llava_qwen import LlavaQwenConfig
-                    tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
-                    cfg_pretrained = LlavaQwenConfig.from_pretrained(model_path)
-                    model = LlavaQwenForCausalLM.from_pretrained(
-                        model_base, low_cpu_mem_usage=True, config=cfg_pretrained, 
-                        attn_implementation=attn_implementation, **kwargs
-                    )
-            else:
-                # Default to Llama-based models
-                if "s2s" in model_name.lower():
-                    from open_omni.model.language_model.llava_s2s_llama import LlavaS2SLlamaConfig
-                    tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
-                    cfg_pretrained = LlavaS2SLlamaConfig.from_pretrained(model_path)
-                    model = LlavaS2SLlamaForCausalLM.from_pretrained(
-                        model_base, low_cpu_mem_usage=True, config=cfg_pretrained, 
-                        attn_implementation=attn_implementation, **kwargs
-                    )
-                else:
-                    from open_omni.model.language_model.llava_llama import LlavaConfig
-                    tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
-                    cfg_pretrained = LlavaConfig.from_pretrained(model_path)
-                    model = LlavaLlamaForCausalLM.from_pretrained(
-                        model_base, low_cpu_mem_usage=True, config=cfg_pretrained, 
-                        attn_implementation=attn_implementation, **kwargs
-                    )
-
-            # Load multimodal projector weights
-            mm_projector_weights = torch.load(
-                os.path.join(model_path, "mm_projector.bin"), map_location="cpu"
-            )
-            mm_projector_weights = {k: v.to(torch.float16) for k, v in mm_projector_weights.items()}
-            model.load_state_dict(mm_projector_weights, strict=False)
+            rank0_print("Model is loaded...")
 
         else:
             # Direct model loading (most common case)
@@ -226,12 +187,14 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
                         rank0_print(f"Overwriting config with {overwrite_config}")
                         for k, v in overwrite_config.items():
                             setattr(llava_s2s_cfg, k, v)
-                        model = LlavaS2SQwenForCausalLM.from_pretrained(
+                        ModelClass = get_model_class("llava_s2s_qwen")
+                        model = ModelClass.from_pretrained(
                             model_path, low_cpu_mem_usage=True, 
                             attn_implementation=attn_implementation, config=llava_s2s_cfg, **kwargs
                         )
                     else:
-                        model = LlavaS2SQwenForCausalLM.from_pretrained(
+                        ModelClass = get_model_class("llava_s2s_qwen")
+                        model = ModelClass.from_pretrained(
                             model_path, low_cpu_mem_usage=True, 
                             attn_implementation=attn_implementation, **kwargs
                         )
@@ -243,12 +206,14 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
                         rank0_print(f"Overwriting config with {overwrite_config}")
                         for k, v in overwrite_config.items():
                             setattr(llava_cfg, k, v)
-                        model = LlavaQwenForCausalLM.from_pretrained(
+                        ModelClass = get_model_class("llava_qwen")
+                        model = ModelClass.from_pretrained(
                             model_path, low_cpu_mem_usage=True, 
                             attn_implementation=attn_implementation, config=llava_cfg, **kwargs
                         )
                     else:
-                        model = LlavaQwenForCausalLM.from_pretrained(
+                        ModelClass = get_model_class("llava_qwen")
+                        model = ModelClass.from_pretrained(
                             model_path, low_cpu_mem_usage=True, 
                             attn_implementation=attn_implementation, **kwargs
                         )
@@ -257,126 +222,78 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
                 if "s2s" in model_name.lower():
                     from open_omni.model.language_model.llava_s2s_llama import LlavaS2SLlamaConfig
                     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
-                    if customized_config is None:
-                        llava_cfg = LlavaS2SLlamaConfig.from_pretrained(model_path)
-                    else:
-                        llava_cfg = customized_config
-
                     if overwrite_config is not None:
+                        llava_s2s_cfg = LlavaS2SLlamaConfig.from_pretrained(model_path)
                         rank0_print(f"Overwriting config with {overwrite_config}")
                         for k, v in overwrite_config.items():
-                            setattr(llava_cfg, k, v)
-
-                    model = LlavaS2SLlamaForCausalLM.from_pretrained(
-                        model_path, low_cpu_mem_usage=True, 
-                        attn_implementation=attn_implementation, config=llava_cfg, **kwargs
-                    )
+                            setattr(llava_s2s_cfg, k, v)
+                        ModelClass = get_model_class("llava_s2s_llama")
+                        model = ModelClass.from_pretrained(
+                            model_path, low_cpu_mem_usage=True, 
+                            attn_implementation=attn_implementation, config=llava_s2s_cfg, **kwargs
+                        )
+                    else:
+                        ModelClass = get_model_class("llava_s2s_llama")
+                        model = ModelClass.from_pretrained(
+                            model_path, low_cpu_mem_usage=True, 
+                            attn_implementation=attn_implementation, **kwargs
+                        )
                 else:
                     from open_omni.model.language_model.llava_llama import LlavaConfig
                     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
-                    if customized_config is None:
-                        llava_cfg = LlavaConfig.from_pretrained(model_path)
-                        if "v1.5" in model_name.lower():
-                            llava_cfg.delay_load = True
-                    else:
-                        llava_cfg = customized_config
-
                     if overwrite_config is not None:
+                        llava_cfg = LlavaConfig.from_pretrained(model_path)
                         rank0_print(f"Overwriting config with {overwrite_config}")
                         for k, v in overwrite_config.items():
                             setattr(llava_cfg, k, v)
-
-                    model = LlavaLlamaForCausalLM.from_pretrained(
-                        model_path, low_cpu_mem_usage=True, 
-                        attn_implementation=attn_implementation, config=llava_cfg, **kwargs
-                    )
+                        ModelClass = get_model_class("llava_llama")
+                        model = ModelClass.from_pretrained(
+                            model_path, low_cpu_mem_usage=True, 
+                            attn_implementation=attn_implementation, config=llava_cfg, **kwargs
+                        )
+                    else:
+                        ModelClass = get_model_class("llava_llama")
+                        model = ModelClass.from_pretrained(
+                            model_path, low_cpu_mem_usage=True, 
+                            attn_implementation=attn_implementation, **kwargs
+                        )
 
     else:
-        # Load standard language model (non-multimodal)
-        if model_base is not None:
-            from peft import PeftModel
-            tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
-            model = AutoModelForCausalLM.from_pretrained(
-                model_base, torch_dtype=torch.float16, low_cpu_mem_usage=True, device_map="auto"
-            )
-            rank0_print(f"Loading LoRA weights from {model_path}")
-            model = PeftModel.from_pretrained(model, model_path)
-            rank0_print(f"Merging weights")
-            model = model.merge_and_unload()
-            rank0_print("Convert to FP16...")
-            model.to(torch.float16)
-        else:
-            if "mpt" in model_name.lower().replace("prompt", ""):
-                tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=True)
-                model = AutoModelForCausalLM.from_pretrained(
-                    model_path, low_cpu_mem_usage=True, trust_remote_code=True, **kwargs
-                )
-            else:
-                tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
-                model = AutoModelForCausalLM.from_pretrained(
-                    model_path, low_cpu_mem_usage=True, **kwargs
-                )
+        # Standard model loading for non-multimodal models
+        tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path, low_cpu_mem_usage=True, **kwargs
+        )
 
-    rank0_print(f"Speech-Only Model Class: {model.__class__.__name__}")
-    
+    # Speech encoder optimization
+    speech_encoder = model.get_speech_encoder()
+    if speech_encoder is not None and not speech_encoder.is_loaded:
+        speech_encoder.load_model()
+        # Memory optimization: use FP16 and freeze for inference
+        speech_encoder.half()
+        speech_encoder.eval()
+        for param in speech_encoder.parameters():
+            param.requires_grad = False
+
+    # Memory cleanup
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
     # Removed image_processor initialization for speech-only optimization
     image_processor = None
 
-    # Optimized multimodal setup for speech-only
-    if ("llava" in model_name.lower() or "longva" in model_name.lower() or 
-        "openomni" in model_name.lower() or "omni" in model_name.lower() or is_multimodal):
-        
-        # Handle speech tokens only (removed image tokens for optimization)
-        mm_use_im_start_end = getattr(model.config, "mm_use_im_start_end", False)
-        
-        # Removed image patch token handling for speech-only optimization
-        # if mm_use_im_patch_token:
-        #     tokenizer.add_tokens([DEFAULT_IMAGE_PATCH_TOKEN], special_tokens=True)
-        
-        # Add speech token if needed
-        if hasattr(model.config, 'speech_token') and model.config.speech_token:
-            tokenizer.add_tokens([DEFAULT_SPEECH_TOKEN], special_tokens=True)
-        
-        model.resize_token_embeddings(len(tokenizer))
-
-        # REMOVED: Vision tower loading for speech-only optimization
-        # This eliminates the major memory and latency bottleneck
-        
-        # Optimized speech encoder loading
-        if getattr(model.config, "speech_encoder_type", None) is not None:
-            rank0_print("Loading optimized speech encoder...")
-            model.get_model().speech_encoder = build_speech_encoder(model.config)
-            model.get_model().speech_encoder.to(device=device_map, dtype=torch.float16)
-            model.get_model().speech_projector.to(device=device_map, dtype=torch.float16)
-            
-            # Optimize speech encoder for inference
-            model.get_model().speech_encoder.eval()
-            for param in model.get_model().speech_encoder.parameters():
-                param.requires_grad = False
-            
-            rank0_print("Speech encoder optimized for inference")
-
-    # Determine context length
     if hasattr(model.config, "max_sequence_length"):
         context_len = model.config.max_sequence_length
-    elif hasattr(model.config, "max_position_embeddings"):
-        context_len = model.config.max_position_embeddings
-    elif hasattr(model.config, "tokenizer_model_max_length"):
-        context_len = model.config.tokenizer_model_max_length
     else:
         context_len = 2048
 
-    # Final optimizations
-    model.eval()
-    for param in model.parameters():
-        param.requires_grad = False
-    
-    # Memory cleanup
-    gc.collect()
-    torch.cuda.empty_cache()
-    
-    rank0_print("Speech-only model loading completed with optimizations")
-    
+    # Add speech token to tokenizer if not present
+    if DEFAULT_SPEECH_TOKEN not in tokenizer.get_vocab():
+        tokenizer.add_tokens([DEFAULT_SPEECH_TOKEN], special_tokens=True)
+        model.resize_token_embeddings(len(tokenizer))
+
+    rank0_print("Speech-only model loaded successfully!")
     return tokenizer, model, image_processor, context_len
 
 

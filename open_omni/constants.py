@@ -15,6 +15,13 @@ LOGDIR = "."
 # Model Constants (Required for compatibility)
 IGNORE_INDEX = -100
 
+# Vision constants (DEPRECATED - kept for compatibility only, not used in speech-only mode)
+IMAGE_TOKEN_INDEX = -200
+DEFAULT_IMAGE_TOKEN = "<image>"
+DEFAULT_IMAGE_PATCH_TOKEN = "<im_patch>"
+DEFAULT_IM_START_TOKEN = "<im_start>"
+DEFAULT_IM_END_TOKEN = "<im_end>"
+
 # Speech-only tokens (core speech processing)
 SPEECH_TOKEN_INDEX = -201
 DEFAULT_SPEECH_TOKEN = "<speech>"
