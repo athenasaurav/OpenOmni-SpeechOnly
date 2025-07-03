@@ -113,8 +113,13 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
 
     # Optimized conversation template handling
     if len(state.messages) == state.offset + 2: # Only speech input, no video
-        template_name = "qwen_s2s" # Optimized for speech-only
-        new_state = conv_templates[template_name].copy()
+        # Use available template or fallback to default
+        template_name = "qwen" if "qwen" in conv_templates else "default"
+        if template_name in conv_templates:
+            new_state = conv_templates[template_name].copy()
+        else:
+            # Fallback to default conversation if no template found
+            new_state = default_conversation.copy()
         new_state.append_message(new_state.roles[0], state.messages[-2][1])
         new_state.append_message(new_state.roles[1], None)
         state = new_state
