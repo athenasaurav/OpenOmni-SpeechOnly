@@ -18,23 +18,22 @@
 import os
 import warnings
 import shutil
-import gc
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig, BitsAndBytesConfig
 
-# Import specific models instead of wildcard import to avoid loading all models
+# Import specific models instead of wildcard import to avoid loading all models at startup
 def get_model_class(model_name):
     """Lazy import of model classes to avoid loading all models at startup"""
     if model_name == "llava_s2s_qwen":
         from open_omni.model.language_model.llava_s2s_qwen import LlavaS2SQwenForCausalLM
         return LlavaS2SQwenForCausalLM
-    elif model_name == "llava_s2s_llama":
-        from open_omni.model.language_model.llava_s2s_llama import LlavaS2SLlamaForCausalLM
-        return LlavaS2SLlamaForCausalLM
     elif model_name == "llava_qwen":
         from open_omni.model.language_model.llava_qwen import LlavaQwenForCausalLM
         return LlavaQwenForCausalLM
+    elif model_name == "llava_s2s_llama":
+        from open_omni.model.language_model.llava_s2s_llama import LlavaS2SLlamaForCausalLM
+        return LlavaS2SLlamaForCausalLM
     elif model_name == "llava_llama":
         from open_omni.model.language_model.llava_llama import LlavaLlamaForCausalLM
         return LlavaLlamaForCausalLM
@@ -42,20 +41,18 @@ def get_model_class(model_name):
         raise ValueError(f"Unknown model name: {model_name}")
 
 from open_omni.constants import DEFAULT_SPEECH_TOKEN
-from open_omni.utils import rank0_print
 from open_omni.model.speech_encoder.builder import build_speech_encoder
 from open_omni.model.speech_projector.builder import build_speech_projector
+from open_omni.utils import rank0_print
 
 
-def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8bit=False, load_4bit=False, 
-                                     device_map="auto", attn_implementation="flash_attention_2", 
-                                     customized_config=None, overwrite_config=None, **kwargs):
+def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", attn_implementation="flash_attention_2", customized_config=None, overwrite_config=None, **kwargs):
     """
-    Optimized speech-only model loading
-    - Removed vision components for reduced memory usage
+    Optimized model loading for speech-only variants
     - Streamlined loading process for faster initialization
     - Memory optimizations throughout the pipeline
     """
+    
     kwargs["device_map"] = device_map
 
     # Quantization setup with optimizations
@@ -64,16 +61,13 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
     elif load_4bit:
         kwargs["load_in_4bit"] = True
         kwargs["quantization_config"] = BitsAndBytesConfig(
-            load_in_4bit=True, 
-            bnb_4bit_compute_dtype=torch.float16, 
-            bnb_4bit_use_double_quant=True, 
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4"
         )
     else:
-        if "qwen2" in model_path.lower() and attn_implementation == "eager":
-            kwargs["torch_dtype"] = torch.bfloat16
-        else:
-            kwargs["torch_dtype"] = torch.float16
+        kwargs["torch_dtype"] = torch.bfloat16
 
     if customized_config is not None:
         kwargs["config"] = customized_config
@@ -83,6 +77,8 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
         if kwargs["multimodal"] is True:
             is_multimodal = True
             kwargs.pop("multimodal")
+        else:
+            is_multimodal = False
     else:
         is_multimodal = False
 
@@ -95,50 +91,70 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
         # Handle LoRA models
         if "lora" in model_name.lower() and model_base is None:
             warnings.warn("LoRA model detected but no base model specified. This may cause issues.")
-
+        
         if model_base is not None:
             # Loading with base model
             rank0_print(f"Loading speech-only model with base: {model_base}")
             lora_cfg_pretrained = AutoConfig.from_pretrained(model_path)
             tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
             rank0_print("Loading speech-only LLaVA from base model...")
-            
+
             # Streamlined model loading based on architecture
             if "qwen" in model_name.lower():
                 if 's2s' in model_name.lower():
                     from open_omni.model.language_model.llava_s2s_qwen import LlavaS2SQwenConfig
-                    lora_cfg_pretrained = LlavaS2SQwenConfig.from_pretrained(model_path)
+                    llava_s2s_cfg = LlavaS2SQwenConfig.from_pretrained(model_path)
+                    if overwrite_config is not None:
+                        rank0_print(f"Overwriting config with {overwrite_config}")
+                        for k, v in overwrite_config.items():
+                            setattr(llava_s2s_cfg, k, v)
                     ModelClass = get_model_class("llava_s2s_qwen")
                     model = ModelClass.from_pretrained(
-                        model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, 
-                        attn_implementation=attn_implementation, **kwargs
+                        model_base, low_cpu_mem_usage=True, 
+                        attn_implementation=attn_implementation, config=llava_s2s_cfg, **kwargs
                     )
                 else:
                     from open_omni.model.language_model.llava_qwen import LlavaQwenConfig
-                    lora_cfg_pretrained = LlavaQwenConfig.from_pretrained(model_path)
+                    llava_cfg = LlavaQwenConfig.from_pretrained(model_path)
+                    if overwrite_config is not None:
+                        rank0_print(f"Overwriting config with {overwrite_config}")
+                        for k, v in overwrite_config.items():
+                            setattr(llava_cfg, k, v)
                     ModelClass = get_model_class("llava_qwen")
                     model = ModelClass.from_pretrained(
-                        model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, 
-                        attn_implementation=attn_implementation, **kwargs
+                        model_base, low_cpu_mem_usage=True, 
+                        attn_implementation=attn_implementation, config=llava_cfg, **kwargs
                     )
             else:
                 # Default to Llama-based models
-                if "s2s" in model_name.lower():
+                if 's2s' in model_name.lower():
                     from open_omni.model.language_model.llava_s2s_llama import LlavaS2SLlamaConfig
-                    lora_cfg_pretrained = LlavaS2SLlamaConfig.from_pretrained(model_path)
+                    llava_s2s_cfg = LlavaS2SLlamaConfig.from_pretrained(model_path)
+                    if overwrite_config is not None:
+                        rank0_print(f"Overwriting config with {overwrite_config}")
+                        for k, v in overwrite_config.items():
+                            setattr(llava_s2s_cfg, k, v)
                     ModelClass = get_model_class("llava_s2s_llama")
                     model = ModelClass.from_pretrained(
-                        model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, 
-                        attn_implementation=attn_implementation, **kwargs
+                        model_base, low_cpu_mem_usage=True, 
+                        attn_implementation=attn_implementation, config=llava_s2s_cfg, **kwargs
                     )
                 else:
                     from open_omni.model.language_model.llava_llama import LlavaConfig
-                    lora_cfg_pretrained = LlavaConfig.from_pretrained(model_path)
+                    llava_cfg = LlavaConfig.from_pretrained(model_path)
+                    if overwrite_config is not None:
+                        rank0_print(f"Overwriting config with {overwrite_config}")
+                        for k, v in overwrite_config.items():
+                            setattr(llava_cfg, k, v)
                     ModelClass = get_model_class("llava_llama")
                     model = ModelClass.from_pretrained(
-                        model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, 
-                        attn_implementation=attn_implementation, **kwargs
+                        model_base, low_cpu_mem_usage=True, 
+                        attn_implementation=attn_implementation, config=llava_cfg, **kwargs
                     )
+        else:
+            # Standard model loading for non-multimodal models
+            tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+            rank0_print("Loading speech-only LLaVA from base model...")
 
             # Handle token embeddings
             token_num, token_dim = model.lm_head.out_features, model.lm_head.in_features
@@ -219,7 +235,7 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
                         )
             else:
                 # Default to Llama-based models
-                if "s2s" in model_name.lower():
+                if 's2s' in model_name.lower():
                     from open_omni.model.language_model.llava_s2s_llama import LlavaS2SLlamaConfig
                     tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
                     if overwrite_config is not None:
@@ -257,7 +273,6 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
                             model_path, low_cpu_mem_usage=True, 
                             attn_implementation=attn_implementation, **kwargs
                         )
-
     else:
         # Standard model loading for non-multimodal models
         tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
@@ -267,9 +282,9 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
 
     # Speech encoder optimization
     speech_encoder = model.get_speech_encoder()
-    if speech_encoder is not None and not speech_encoder.is_loaded:
-        speech_encoder.load_model()
-        # Memory optimization: use FP16 and freeze for inference
+    if speech_encoder is not None:
+        # FIXED: Removed is_loaded check since WhisperWrappedEncoder doesn't have this attribute
+        # The speech encoder is already loaded when created, so we can directly optimize it
         speech_encoder.half()
         speech_encoder.eval()
         for param in speech_encoder.parameters():
@@ -288,15 +303,15 @@ def load_pretrained_model_speech_only(model_path, model_base, model_name, load_8
     else:
         context_len = 2048
 
-    # Add speech token to tokenizer if not present
-    if DEFAULT_SPEECH_TOKEN not in tokenizer.get_vocab():
-        tokenizer.add_tokens([DEFAULT_SPEECH_TOKEN], special_tokens=True)
-        model.resize_token_embeddings(len(tokenizer))
-
-    rank0_print("Speech-only model loaded successfully!")
     return tokenizer, model, image_processor, context_len
 
 
-# Alias for backward compatibility
-load_pretrained_model = load_pretrained_model_speech_only
+def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", attn_implementation="flash_attention_2", customized_config=None, overwrite_config=None, **kwargs):
+    """
+    Main entry point - delegates to optimized speech-only loader
+    """
+    return load_pretrained_model_speech_only(
+        model_path, model_base, model_name, load_8bit, load_4bit, 
+        device_map, attn_implementation, customized_config, overwrite_config, **kwargs
+    )
 
