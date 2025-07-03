@@ -199,18 +199,32 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
 
     for chunk in response.iter_lines(decode_unicode=False):
         if chunk:
-            data = json.loads(chunk.decode())
-            if data["error_code"] == 0:
-                generated_text = data["text"]
-                if "audio" in data and data["audio"]:
-                    generated_audio_segments.extend(data["audio"])
-                state.messages[-1][-1] = generated_text
-                yield (state, generated_text, "", None, "")
-            else:
-                output = data["text"] + f" (error_code: {data['error_code']})"
-                state.messages[-1][-1] = output
-                yield (state, output, "", None, "")
-                return
+            chunk_str = chunk.decode()
+            # Handle multiple JSON objects in one chunk by splitting on newlines
+            lines = chunk_str.strip().split('\n')
+            for line in lines:
+                line = line.strip()
+                if line:
+                    try:
+                        data = json.loads(line)
+                        if data["error_code"] == 0:
+                            generated_text = data["text"]
+                            if "audio" in data and data["audio"]:
+                                generated_audio_segments.extend(data["audio"])
+                            state.messages[-1][-1] = generated_text
+                            yield (state, generated_text, "", None, "")
+                        else:
+                            output = data["text"] + f" (error_code: {data['error_code']})"
+                            state.messages[-1][-1] = output
+                            yield (state, output, "", None, "")
+                            return
+                    except json.JSONDecodeError as e:
+                        print(f"JSON decode error for line: {line}")
+                        print(f"Error: {e}")
+                        continue
+                    except Exception as e:
+                        print(f"Error processing line: {e}")
+                        continue
 
     # Generate final audio using vocoder
     audio_result = None
