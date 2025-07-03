@@ -4,7 +4,6 @@ from typing import List, Any, Dict, Union, Tuple
 import re
 import base64
 from io import BytesIO
-from PIL import Image
 from transformers import AutoTokenizer
 
 
@@ -53,7 +52,7 @@ class Conversation:
             if "mmtag" in self.version:
                 init_msg = init_msg.replace("<image>", "").strip()
                 messages[0] = (init_role, init_msg)
-                messages.insert(0, (self.roles[0], "<Image><image></Image>"))
+                messages.insert(0, (self.roles[0], "<Speech><speech></Speech>"))
                 messages.insert(1, (self.roles[1], "Received."))
             # NOTE we allow the dialogue is not started with <image>
             # elif not init_msg.startswith("<image>"):
@@ -349,7 +348,7 @@ If a question does not make any sense, or is not factually coherent, explain why
 )
 
 conv_llava_llama_2 = Conversation(
-    system="You are a helpful language and vision assistant. " "You are able to understand the visual content that the user provides, " "and assist the user with a variety of tasks using natural language.",
+    system="You are a helpful speech-to-speech assistant. " "You are able to understand the speech content that the user provides, " "and assist the user with a variety of tasks using natural language.",
     roles=("USER", "ASSISTANT"),
     version="llama_v2",
     messages=[],
@@ -371,7 +370,7 @@ def safe_load_tokenizer(tokenizer_id):
         print(f"Encounter Error: {e}")
         return None
 conv_llava_llama_3 = Conversation(
-    system="You are a helpful language and vision assistant. " "You are able to understand the visual content that the user provides, " "and assist the user with a variety of tasks using natural language.",
+    system="You are a helpful speech-to-speech assistant. " "You are able to understand the speech content that the user provides, " "and assist the user with a variety of tasks using natural language.",
     roles=("user", "assistant"),
     version="llama_v3",
     messages=[],
@@ -395,7 +394,7 @@ conv_mistral_instruct = Conversation(
 )
 
 conv_llava_llama_2_simple = Conversation(
-    system="Answer the questions about the visual content that the user provides.",
+    system="Answer the questions about the speech content that the user provides.",
     roles=("USER", "ASSISTANT"),
     version="llama_v2",
     messages=[],
@@ -406,7 +405,7 @@ conv_llava_llama_2_simple = Conversation(
 )
 
 conv_llava_llama_2_mmtag = Conversation(
-    system="Answer the questions about the visual content that the user provides." "The visual content will be provided with the following format: <Image>visual content</Image>.",
+    system="Answer the questions about the speech content that the user provides." "The speech content will be provided with the following format: <Speech>speech content</Speech>.",
     roles=("USER", "ASSISTANT"),
     version="llama_v2_mmtag",
     messages=[],
@@ -460,8 +459,8 @@ conv_llava_v0 = Conversation(
 
 conv_llava_v0_mmtag = Conversation(
     system="A chat between a curious user and an artificial intelligence assistant. "
-    "The assistant is able to understand the visual content that the user provides, and assist the user with a variety of tasks using natural language."
-    "The visual content will be provided with the following format: <Image>visual content</Image>.",
+    "The assistant is able to understand the speech content that the user provides, and assist the user with a variety of tasks using natural language."
+    "The speech content will be provided with the following format: <Speech>speech content</Speech>.",
     roles=("Human", "Assistant"),
     messages=[],
     offset=0,
@@ -483,8 +482,8 @@ conv_llava_v1 = Conversation(
 
 conv_llava_v1_mmtag = Conversation(
     system="A chat between a curious user and an artificial intelligence assistant. "
-    "The assistant is able to understand the visual content that the user provides, and assist the user with a variety of tasks using natural language."
-    "The visual content will be provided with the following format: <Image>visual content</Image>.",
+    "The assistant is able to understand the speech content that the user provides, and assist the user with a variety of tasks using natural language."
+    "The speech content will be provided with the following format: <Speech>speech content</Speech>.",
     roles=("USER", "ASSISTANT"),
     messages=[],
     offset=0,

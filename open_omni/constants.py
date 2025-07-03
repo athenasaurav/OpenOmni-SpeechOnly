@@ -1,37 +1,38 @@
 """
-Optimized Constants for Speech-Only OpenOmni
-- Removed image-related constants for cleaner codebase
-- Added speech-specific optimizations
+Speech-Only Constants for OpenOmni
+- Completely removed all vision-related constants
+- Optimized purely for speech-to-speech processing
+- No image/video processing capabilities
 """
 
-# Speech-only tokens (removed image tokens for optimization)
+# Controller and Worker Constants (Required for demo)
+CONTROLLER_HEART_BEAT_EXPIRATION = 30
+WORKER_HEART_BEAT_INTERVAL = 15
+
+# Logging Directory (Required by utils.py)
+LOGDIR = "."
+
+# Model Constants (Required for compatibility)
+IGNORE_INDEX = -100
+
+# Speech-only tokens (core speech processing)
+SPEECH_TOKEN_INDEX = -201
 DEFAULT_SPEECH_TOKEN = "<speech>"
 DEFAULT_SPEECH_PATCH_TOKEN = "<sp_patch>"
 DEFAULT_SP_START_TOKEN = "<sp_start>"
 DEFAULT_SP_END_TOKEN = "<sp_end>"
 
-# Legacy image tokens (kept for compatibility but not used)
-DEFAULT_IMAGE_TOKEN = "<image>"
-DEFAULT_IMAGE_PATCH_TOKEN = "<im_patch>"
-DEFAULT_IM_START_TOKEN = "<im_start>"
-DEFAULT_IM_END_TOKEN = "<im_end>"
-
-# Speech processing constants
-SPEECH_TOKEN_INDEX = -200
-SPEECH_PATCH_TOKEN_INDEX = -201
+# Additional speech processing constants
 SP_START_TOKEN_INDEX = -202
 SP_END_TOKEN_INDEX = -203
-
-# Legacy image constants (kept for compatibility)
-IMAGE_TOKEN_INDEX = -200
-IGNORE_INDEX = -100
+SPEECH_PATCH_TOKEN_INDEX = -204
 
 # Speech-specific configurations
 DEFAULT_SPEECH_SAMPLE_RATE = 16000
 DEFAULT_SPEECH_CHUNK_LENGTH = 30  # seconds
 DEFAULT_SPEECH_OVERLAP = 0.5  # seconds
 
-# Optimization flags
+# Optimization flags for speech-only mode
 ENABLE_SPEECH_STREAMING = True
 ENABLE_MEMORY_OPTIMIZATION = True
 ENABLE_FAST_INFERENCE = True
@@ -97,9 +98,8 @@ LOG_LEVEL = "INFO"
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_FILE = "openomni_speech_only.log"
 
-# Feature flags for optimization
+# Feature flags for optimization (NO VISION)
 FEATURES = {
-    "vision_processing": False,  # Disabled for speech-only mode
     "speech_processing": True,
     "streaming": True,
     "memory_optimization": True,
