@@ -306,7 +306,33 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
     logger.info(f"TTFB-LOG: Response received at {utc_now_str()}")
     logger.info(f"Speech generation time: {finish_tstamp - start_tstamp:.2f}s")
 
-    yield (state, generated_text, "", audio_result, "")
+    # Convert to Gradio messages format
+    messages = []
+    for i, (user_msg, assistant_msg) in enumerate(state.messages):
+        # Add user message
+        if user_msg is not None:
+            if isinstance(user_msg, tuple) and len(user_msg) == 2:
+                # Speech input: (text, audio_data)
+                text_content, audio_data = user_msg
+                messages.append({
+                    "role": "user", 
+                    "content": text_content if text_content else "Speech input"
+                })
+            else:
+                # Text input
+                messages.append({
+                    "role": "user",
+                    "content": str(user_msg)
+                })
+        
+        # Add assistant message
+        if assistant_msg is not None:
+            messages.append({
+                "role": "assistant",
+                "content": str(assistant_msg)
+            })
+
+    yield (state, messages, "", audio_result, "")
 
 title_markdown = ("""
 # 🎙️ OpenOmni Speech-Only Demo
