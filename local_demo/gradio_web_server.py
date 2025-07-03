@@ -14,7 +14,6 @@ import soundfile as sf
 from open_omni.conversation import default_conversation, conv_templates
 from open_omni.constants import LOGDIR
 from open_omni.utils import build_logger, server_error_msg
-from fairseq.models.text_to_speech.vocoder import CodeHiFiGANVocoder
 
 logger = build_logger("gradio_web_server", "gradio_web_server.log")
 
@@ -82,12 +81,13 @@ def add_speech_only(state, speech, request: gr.Request):
     """
     logger.info(f"add_speech_only. ip: {request.client.host}")
 
-    # Create speech-only conversation
+    # Create speech-only conversation with proper format
     speech_text = '<speech>\n'
-    speech_text = (speech_text, speech)
+    # FIXED: Create proper 2-element tuple for speech-only format
+    speech_tuple = (speech_text, speech)
 
     state = default_conversation.copy()
-    state.append_message(state.roles[0], speech_text)
+    state.append_message(state.roles[0], speech_tuple)
     state.append_message(state.roles[1], None)
     state.skip_next = False
     return (state)
@@ -111,18 +111,21 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
         yield (state, "", "", None, "")
         return
 
-    # Optimized conversation template handling
+    # FIXED: Robust conversation template handling
     if len(state.messages) == state.offset + 2: # Only speech input, no video
-        # Use available template or fallback to default
-        template_name = "qwen" if "qwen" in conv_templates else "default"
-        if template_name in conv_templates:
+        # Use available template with fallback chain
+        template_name = None
+        for candidate in ["qwen", "llava_v1", "default"]:
+            if candidate in conv_templates:
+                template_name = candidate
+                break
+        
+        if template_name and template_name in conv_templates:
             new_state = conv_templates[template_name].copy()
-        else:
-            # Fallback to default conversation if no template found
-            new_state = default_conversation.copy()
-        new_state.append_message(new_state.roles[0], state.messages[-2][1])
-        new_state.append_message(new_state.roles[1], None)
-        state = new_state
+            new_state.append_message(new_state.roles[0], state.messages[-2][1])
+            new_state.append_message(new_state.roles[1], None)
+            state = new_state
+        # If no template found, continue with current state
 
     controller_url = args.controller_url
     ret = requests.post(controller_url + "/get_worker_address",
@@ -137,28 +140,39 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
 
     prompt = state.get_prompt()
 
-    # FIXED: Handle speech-only audio processing properly
-    # Extract audio data from the speech tuple in the message
-    speech_data = state.messages[0][1]  # This is the (speech_text, speech) tuple
-    if isinstance(speech_data, tuple) and len(speech_data) == 2:
-        speech_text, speech = speech_data
-        if speech is not None:
-            # Process the audio data
-            sr, audio = speech  # Now this should work correctly
-            
-            # Efficient audio resampling with memory optimization
-            with torch.no_grad():
-                resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)
-                audio_tensor = torch.tensor(audio.astype(np.float32)).unsqueeze(0)
-                audio = resampler(audio_tensor).squeeze(0).numpy()
-                audio /= 32768.0
-                audio = audio.tolist()
-        else:
-            # No audio data available
-            audio = []
-            sr = 16000
-    else:
-        # Fallback for cases where speech data is not in expected format
+    # FIXED: Robust speech-only audio processing
+    audio = []
+    sr = 16000
+    
+    try:
+        # Extract audio data from the speech tuple in the message
+        if len(state.messages) > 0:
+            speech_data = state.messages[0][1]  # This should be the (speech_text, speech) tuple
+            if isinstance(speech_data, tuple) and len(speech_data) >= 2:
+                speech_text, speech = speech_data[0], speech_data[1]
+                if speech is not None and isinstance(speech, tuple) and len(speech) >= 2:
+                    # Process the audio data
+                    sr, audio_data = speech  # Now this should work correctly
+                    
+                    # Efficient audio resampling with memory optimization
+                    with torch.no_grad():
+                        resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)
+                        audio_tensor = torch.tensor(audio_data.astype(np.float32)).unsqueeze(0)
+                        audio = resampler(audio_tensor).squeeze(0).numpy()
+                        audio /= 32768.0
+                        audio = audio.tolist()
+                        sr = 16000
+                elif speech is not None:
+                    # Handle case where speech is directly the audio data
+                    if isinstance(speech, tuple) and len(speech) >= 2:
+                        sr, audio_data = speech
+                        audio = audio_data.astype(np.float32).tolist()
+                    else:
+                        logger.warning(f"Unexpected speech format: {type(speech)}")
+            else:
+                logger.warning(f"Unexpected speech_data format: {type(speech_data)}, length: {len(speech_data) if hasattr(speech_data, '__len__') else 'N/A'}")
+    except Exception as e:
+        logger.error(f"Error processing audio data: {e}")
         audio = []
         sr = 16000
 
@@ -199,6 +213,7 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
                 return
 
     # Generate final audio using vocoder
+    audio_result = None
     if generated_audio_segments and vocoder is not None:
         try:
             # Convert audio segments to tensor
@@ -208,10 +223,12 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
             with torch.no_grad():
                 if torch.cuda.is_available():
                     audio_tensor = audio_tensor.cuda()
-                    vocoder = vocoder.cuda()
+                    vocoder_model = vocoder.cuda()
+                else:
+                    vocoder_model = vocoder
                 
                 # Generate waveform
-                waveform = vocoder(audio_tensor.unsqueeze(0))
+                waveform = vocoder_model(audio_tensor.unsqueeze(0))
                 
                 if torch.cuda.is_available():
                     waveform = waveform.cpu()
@@ -220,7 +237,8 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
                 audio_output = waveform.squeeze().numpy()
                 
                 # Normalize audio
-                audio_output = audio_output / np.max(np.abs(audio_output))
+                if np.max(np.abs(audio_output)) > 0:
+                    audio_output = audio_output / np.max(np.abs(audio_output))
                 
                 # Create audio tuple for Gradio (sample_rate, audio_data)
                 audio_result = (24000, audio_output)  # 24kHz output
@@ -228,8 +246,6 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
         except Exception as e:
             logger.error(f"Audio generation error: {e}")
             audio_result = None
-    else:
-        audio_result = None
 
     finish_tstamp = time.time()
     logger.info(f"TTFB-LOG: Response received at {utc_now_str()}")
@@ -290,11 +306,13 @@ def build_demo(embed_mode, cur_dir=None, concurrency_count=16):
                     max_output_tokens = gr.Slider(minimum=0, maximum=1024, value=512, step=64, interactive=True, label="Max output tokens",)
 
             with gr.Column(scale=8):
+                # FIXED: Set type='messages' to avoid deprecation warning
                 chatbot = gr.Chatbot(
                     elem_id="chatbot",
                     label="Conversation",
                     height=650,
-                    layout="panel"
+                    layout="panel",
+                    type="messages"  # Fixed deprecation warning
                 )
                 
                 # Audio output
@@ -361,6 +379,35 @@ def build_demo(embed_mode, cur_dir=None, concurrency_count=16):
 
     return demo
 
+def initialize_vocoder(vocoder_path, vocoder_cfg_path):
+    """
+    FIXED: Robust vocoder initialization with proper error handling
+    """
+    try:
+        # Import vocoder here to avoid import issues
+        from fairseq.models.text_to_speech.vocoder import CodeHiFiGANVocoder
+        
+        # Check if files exist
+        if not os.path.exists(vocoder_path):
+            logger.error(f"Vocoder checkpoint not found: {vocoder_path}")
+            return None
+            
+        if not os.path.exists(vocoder_cfg_path):
+            logger.error(f"Vocoder config not found: {vocoder_cfg_path}")
+            return None
+        
+        # Load vocoder with proper error handling
+        vocoder = CodeHiFiGANVocoder(vocoder_path, vocoder_cfg_path)
+        logger.info("Vocoder initialized successfully")
+        return vocoder
+        
+    except ImportError as e:
+        logger.error(f"Failed to import vocoder: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to initialize vocoder: {e}")
+        return None
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default="0.0.0.0")
@@ -376,13 +423,10 @@ if __name__ == "__main__":
     parser.add_argument("--vocoder-cfg", type=str, required=True, help="Path to vocoder config")
     args = parser.parse_args()
 
-    # Initialize vocoder
-    try:
-        vocoder = CodeHiFiGANVocoder(args.vocoder, args.vocoder_cfg)
-        logger.info("Vocoder initialized successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize vocoder: {e}")
-        vocoder = None
+    # FIXED: Initialize vocoder with robust error handling
+    vocoder = initialize_vocoder(args.vocoder, args.vocoder_cfg)
+    if vocoder is None:
+        logger.warning("Vocoder initialization failed - audio generation will be disabled")
 
     logger.info("Starting optimized speech-only demo...")
     logger.info(args)
