@@ -219,8 +219,36 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
                             yield (state, output, "", None, "")
                             return
                     except json.JSONDecodeError as e:
+                        # Handle malformed JSON by trying to extract valid JSON parts
                         print(f"JSON decode error for line: {line}")
                         print(f"Error: {e}")
+                        # Try to find valid JSON in the line
+                        try:
+                            # Look for JSON objects within the line
+                            import re
+                            json_pattern = r'\{[^{}]*\}'
+                            matches = re.findall(json_pattern, line)
+                            for match in matches:
+                                try:
+                                    data = json.loads(match)
+                                    if "error_code" in data:
+                                        if data["error_code"] == 0:
+                                            generated_text = data.get("text", "")
+                                            if "audio" in data and data["audio"]:
+                                                generated_audio_segments.extend(data["audio"])
+                                            if generated_text:
+                                                state.messages[-1][-1] = generated_text
+                                                yield (state, generated_text, "", None, "")
+                                        else:
+                                            output = data.get("text", "Error occurred") + f" (error_code: {data['error_code']})"
+                                            state.messages[-1][-1] = output
+                                            yield (state, output, "", None, "")
+                                            return
+                                        break
+                                except json.JSONDecodeError:
+                                    continue
+                        except Exception:
+                            pass
                         continue
                     except Exception as e:
                         print(f"Error processing line: {e}")
@@ -230,6 +258,9 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
     audio_result = None
     if generated_audio_segments and vocoder is not None:
         try:
+            import tempfile
+            import soundfile as sf
+            
             # Convert audio segments to tensor
             audio_tensor = torch.tensor(generated_audio_segments, dtype=torch.float32)
             
@@ -254,12 +285,22 @@ def http_bot_speech_only(state, model_selector, temperature, top_p, max_new_toke
                 if np.max(np.abs(audio_output)) > 0:
                     audio_output = audio_output / np.max(np.abs(audio_output))
                 
-                # Create audio tuple for Gradio (sample_rate, audio_data)
-                audio_result = (24000, audio_output)  # 24kHz output
+                # Save audio to temporary file
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                    sf.write(tmp_file.name, audio_output, 24000)
+                    audio_result = tmp_file.name
                 
         except Exception as e:
             logger.error(f"Audio generation error: {e}")
+            import traceback
+            traceback.print_exc()
             audio_result = None
+    else:
+        # If no audio segments or vocoder not available, return None
+        if not generated_audio_segments:
+            print("No audio segments generated")
+        if vocoder is None:
+            print("Vocoder not available")
 
     finish_tstamp = time.time()
     logger.info(f"TTFB-LOG: Response received at {utc_now_str()}")
