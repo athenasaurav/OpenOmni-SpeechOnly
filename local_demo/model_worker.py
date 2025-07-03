@@ -27,7 +27,7 @@ from open_omni.utils import (build_logger, server_error_msg,
     pretty_print_semaphore)
 from open_omni.model.builder import load_pretrained_model
 from open_omni.constants import SPEECH_TOKEN_INDEX, DEFAULT_SPEECH_TOKEN
-from open_omni.mm_utils import tokenizer_image_speech_tokens
+from open_omni.mm_utils_speech import tokenizer_speech_tokens, KeywordsStoppingCriteria
 from transformers import TextIteratorStreamer
 from threading import Thread
 
@@ -107,8 +107,8 @@ class SpeechOnlyModelWorker:
         
         logger.info("Loading optimized speech-only model...")
         
-        # Load model with optimizations
-        self.tokenizer, self.model, self.image_processor, self.context_len = load_pretrained_model(
+        # Load model with optimizations (image_processor will be None for speech-only)
+        self.tokenizer, self.model, _, self.context_len = load_pretrained_model(
             model_path, model_base, model_name, 
             load_8bit=load_8bit, load_4bit=load_4bit, 
             device_map=self.device, 
@@ -225,9 +225,9 @@ class SpeechOnlyModelWorker:
         stop_str = params.get("stop", None)
         do_sample = True if temperature > 0.001 else False
 
-        # Optimized tokenization - removed IMAGE_TOKEN_INDEX for speech-only
-        input_ids = tokenizer_image_speech_tokens(
-            prompt, tokenizer, None, SPEECH_TOKEN_INDEX, return_tensors='pt'
+        # Optimized tokenization - speech-only processing
+        input_ids = tokenizer_speech_tokens(
+            prompt, tokenizer, SPEECH_TOKEN_INDEX, return_tensors='pt'
         ).unsqueeze(0).to(self.device)
         
         # Optimized streamers with reduced timeout for faster response
