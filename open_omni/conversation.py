@@ -49,25 +49,25 @@ class Conversation:
             messages = self.messages.copy()
             init_role, init_msg = messages[0].copy()
             init_msg = init_msg[0]
-            if "mmtag" in self.version:
-                init_msg = init_msg.replace("<image>", "").strip()
-                messages[0] = (init_role, init_msg)
-                messages.insert(0, (self.roles[0], "<Speech><speech></Speech>"))
-                messages.insert(1, (self.roles[1], "Received."))
             # NOTE we allow the dialogue is not started with <image>
             # elif not init_msg.startswith("<image>"):
-            #     # TODO maybe this should be changed for interleaved data?
-            #     init_msg = init_msg.replace("<image>", "").strip()
-            #     messages[0] = (init_role, "<image>\n" + init_msg)
-            else:
-                messages[0] = (init_role, init_msg)
+            # # TODO maybe this should be changed for interleaved data?
+            # #     init_msg = init_msg.replace("<image>", "").strip()
+            # #     messages[0] = (init_role, "<image>\n" + init_msg)
+            # else:
+            messages[0] = (init_role, init_msg)
 
         if self.sep_style == SeparatorStyle.SINGLE:
             ret = self.system + self.sep
             for role, message in messages:
                 if message:
+                    # FIXED: Handle speech-only message format properly
                     if type(message) is tuple:
-                        message, _, _ = message
+                        # Speech-only format: (text, audio) - extract text only
+                        if len(message) >= 2:
+                            message = message[0]  # Get text part
+                        else:
+                            message = str(message[0]) if message else ""
                     ret += role + ": " + message + self.sep
                 else:
                     ret += role + ":"
@@ -77,8 +77,13 @@ class Conversation:
             ret = self.system + seps[0]
             for i, (role, message) in enumerate(messages):
                 if message:
+                    # FIXED: Handle speech-only message format properly
                     if type(message) is tuple:
-                        message, _, _ = message
+                        # Speech-only format: (text, audio) - extract text only
+                        if len(message) >= 2:
+                            message = message[0]  # Get text part
+                        else:
+                            message = str(message[0]) if message else ""
                     ret += role + ": " + message + seps[i % 2]
                 else:
                     ret += role + ":"
@@ -87,92 +92,139 @@ class Conversation:
             ret = "" if self.system == "" else self.system + self.sep + "\n"
             for role, message in messages:
                 if message:
+                    # FIXED: Handle speech-only message format properly
                     if type(message) is tuple:
-                        message, images = message
+                        # Speech-only format: (text, audio) - extract text only
+                        if len(message) >= 2:
+                            message = message[0]  # Get text part
+                        else:
+                            message = str(message[0]) if message else ""
                         # if "<image>" not in message:
-                        #     message = "<image>" * len(images) + message
+                        #     message = "<image>" + len(images) + message
                     ret += role + "\n" + message + self.sep + "\n"
                 else:
                     ret += role + "\n"
-            return ret
-
-        elif self.sep_style == SeparatorStyle.LLAMA_3:
-            if self.tokenizer is None:
-                raise ValueError("Llama 3 tokenizer is not available. Make sure you have the necessary permissions.")
-            chat_template_messages = [{"role": "system", "content": self.system}]
-            for role, message in messages:
-                if message:
-                    if type(message) is tuple:
-                        message, images = message
-                        # if "<image>" not in message:
-                        #     message = "<image>" * len(images) + message
-                    chat_template_messages.append({"role": role, "content": message})
-
-            # print(chat_template_messages)
-            return self.tokenizer.apply_chat_template(chat_template_messages, tokenize=False, add_generation_prompt=True)
-            # ret = "" if self.system == "" else self.system + self.sep + "\n"
-            # for role, message in messages:
-            #     if message:
-            #         if type(message) is tuple:
-            #             message, images = message
-            #             message = "<image>" * len(images) + message
-            #         ret += role + "\n" + message + self.sep + "\n"
-            #     else:
-            #         ret += role + "\n"
-            # return ret
 
         elif self.sep_style == SeparatorStyle.MPT:
             ret = self.system + self.sep
             for role, message in messages:
                 if message:
+                    # FIXED: Handle speech-only message format properly
                     if type(message) is tuple:
-                        message, _, _ = message
-                    ret += role + message + self.sep
-                else:
-                    ret += role
-
-        elif self.sep_style == SeparatorStyle.GEMMA:
-            ret = ""
-            for i, (role, message) in enumerate(messages):
-                assert role == self.roles[i % 2], "Conversation should alternate user/assistant/user/assistant/..."
-                if message:
-                    if type(message) is tuple:
-                        message, _, _ = message
+                        # Speech-only format: (text, audio) - extract text only
+                        if len(message) >= 2:
+                            message = message[0]  # Get text part
+                        else:
+                            message = str(message[0]) if message else ""
                     ret += role + message + self.sep
                 else:
                     ret += role
 
         elif self.sep_style == SeparatorStyle.LLAMA_2:
-            wrap_sys = lambda msg: f"<<SYS>>\n{msg}\n<</SYS>>\n\n" if len(msg) > 0 else msg
+            wrap_sys = lambda msg: f"<<SYS>>\n{msg}\n<</SYS>>\n\n"
             wrap_inst = lambda msg: f"[INST] {msg} [/INST]"
             ret = ""
 
             for i, (role, message) in enumerate(messages):
                 if i == 0:
                     assert message, "first message should not be none"
-                    assert role == self.roles[0], "first message should come from user"
-                if message:
+                    # FIXED: Handle speech-only message format properly
                     if type(message) is tuple:
-                        message, _, _ = message
-                    if i == 0:
+                        # Speech-only format: (text, audio) - extract text only
+                        if len(message) >= 2:
+                            message = message[0]  # Get text part
+                        else:
+                            message = str(message[0]) if message else ""
+                    assert role == self.roles[0], "first message should come from user"
+                    if self.system:
                         message = wrap_sys(self.system) + message
-                    if i % 2 == 0:
-                        message = wrap_inst(message)
-                        ret += self.sep + message
-                    else:
-                        ret += " " + message + " " + self.sep2
+                    ret += wrap_inst(message)
                 else:
-                    ret += ""
-            ret = ret.lstrip(self.sep)
+                    # FIXED: Handle speech-only message format properly
+                    if type(message) is tuple:
+                        # Speech-only format: (text, audio) - extract text only
+                        if len(message) >= 2:
+                            message = message[0]  # Get text part
+                        else:
+                            message = str(message[0]) if message else ""
+                    if message:
+                        ret += " " + message + " </s><s>"
+                    else:
+                        ret += ""
 
-        elif self.sep_style == SeparatorStyle.PLAIN:
-            seps = [self.sep, self.sep2]
-            ret = self.system
+        elif self.sep_style == SeparatorStyle.LLAMA_3:
+            chat_template = self.tokenizer.chat_template
+            if chat_template is not None:
+                encodeds = []
+                for i, (role, message) in enumerate(messages):
+                    if message:
+                        # FIXED: Handle speech-only message format properly
+                        if type(message) is tuple:
+                            # Speech-only format: (text, audio) - extract text only
+                            if len(message) >= 2:
+                                message = message[0]  # Get text part
+                            else:
+                                message = str(message[0]) if message else ""
+                        encodeds.append({"role": role, "content": message})
+                ret = self.tokenizer.apply_chat_template(encodeds, tokenize=False)
+            else:
+                ret = f"{self.system}\n\n"
+                for i, (role, message) in enumerate(messages):
+                    if message:
+                        # FIXED: Handle speech-only message format properly
+                        if type(message) is tuple:
+                            # Speech-only format: (text, audio) - extract text only
+                            if len(message) >= 2:
+                                message = message[0]  # Get text part
+                            else:
+                                message = str(message[0]) if message else ""
+                        ret += f"<|start_header_id|>{role}<|end_header_id|>\n\n{message}<|eot_id|>"
+                    else:
+                        ret += f"<|start_header_id|>{role}<|end_header_id|>\n\n"
+
+        elif self.sep_style == SeparatorStyle.QWEN:
+            ret = "" if self.system == "" else self.system + self.tokenizer.im_end + "\n"
             for i, (role, message) in enumerate(messages):
                 if message:
+                    # FIXED: Handle speech-only message format properly
                     if type(message) is tuple:
-                        message, _, _ = message
-                    ret += message + seps[i % 2]
+                        # Speech-only format: (text, audio) - extract text only
+                        if len(message) >= 2:
+                            message = message[0]  # Get text part
+                        else:
+                            message = str(message[0]) if message else ""
+                    ret += self.tokenizer.im_start + role + "\n" + message + self.tokenizer.im_end + "\n"
+                else:
+                    ret += self.tokenizer.im_start + role + "\n"
+
+        elif self.sep_style == SeparatorStyle.GEMMA:
+            ret = ""
+            for i, (role, message) in enumerate(messages):
+                assert role in ["user", "model"], f"Unexpected role: {role}"
+                if message:
+                    # FIXED: Handle speech-only message format properly
+                    if type(message) is tuple:
+                        # Speech-only format: (text, audio) - extract text only
+                        if len(message) >= 2:
+                            message = message[0]  # Get text part
+                        else:
+                            message = str(message[0]) if message else ""
+                    ret += f"<start_of_turn>{role}\n{message}<end_of_turn>\n"
+                else:
+                    ret += f"<start_of_turn>{role}\n"
+
+        elif self.sep_style == SeparatorStyle.PLAIN:
+            ret = ""
+            for role, message in messages:
+                if message:
+                    # FIXED: Handle speech-only message format properly
+                    if type(message) is tuple:
+                        # Speech-only format: (text, audio) - extract text only
+                        if len(message) >= 2:
+                            message = message[0]  # Get text part
+                        else:
+                            message = str(message[0]) if message else ""
+                    ret += message + self.sep
                 else:
                     ret += ""
         else:
@@ -183,151 +235,91 @@ class Conversation:
     def append_message(self, role, message):
         self.messages.append([role, message])
 
-    def process_image(self, image, image_process_mode, return_pil=False, image_format="PNG"):
-        if image_process_mode == "Pad":
+    def process_image(self, image, image_process_mode, return_pil=False, image_format='PNG', max_len=1344, min_len=672):
+        # SPEECH-ONLY: Image processing removed
+        # This method is kept for compatibility but does nothing
+        return None
 
-            def expand2square(pil_img, background_color=(122, 116, 104)):
-                width, height = pil_img.size
-                if width == height:
-                    return pil_img
-                elif width > height:
-                    result = Image.new(pil_img.mode, (width, width), background_color)
-                    result.paste(pil_img, (0, (width - height) // 2))
-                    return result
-                else:
-                    result = Image.new(pil_img.mode, (height, height), background_color)
-                    result.paste(pil_img, ((height - width) // 2, 0))
-                    return result
-
-            image = expand2square(image)
-        elif image_process_mode in ["Default", "Crop"]:
-            pass
-        elif image_process_mode == "Resize":
-            image = image.resize((336, 336))
-        else:
-            raise ValueError(f"Invalid image_process_mode: {image_process_mode}")
-
-        if type(image) is not Image.Image:
-            image = Image.open(image).convert("RGB")
-
-        max_hw, min_hw = max(image.size), min(image.size)
-        aspect_ratio = max_hw / min_hw
-        max_len, min_len = 672, 448
-        shortest_edge = int(min(max_len / aspect_ratio, min_len, min_hw))
-        longest_edge = int(shortest_edge * aspect_ratio)
-        W, H = image.size
-        if H > W:
-            H, W = longest_edge, shortest_edge
-        else:
-            H, W = shortest_edge, longest_edge
-        image = image.resize((W, H))
-        if return_pil:
-            return image
-        else:
-            buffered = BytesIO()
-            image.save(buffered, format=image_format)
-            img_b64_str = base64.b64encode(buffered.getvalue()).decode()
-            return img_b64_str
-
-    def get_images(self, return_pil=False, return_path=False):
-        images = []
-        for i, (role, msg) in enumerate(self.messages[self.offset :]):
-            if i % 2 == 0:
-                if type(msg) is tuple:
-                    msg, image, image_process_mode = msg
-                    if type(image) != list:
-                        image = [image]
-                    for img in image:
-                        if not return_path:
-                            img = self.process_image(img, image_process_mode, return_pil=return_pil)
-                        else:
-                            images.append(img)
-        return images
+    def get_images(self, return_pil=False):
+        # SPEECH-ONLY: No images in speech-only mode
+        return []
 
     def to_gradio_chatbot(self):
         ret = []
-        for i, (role, msg) in enumerate(self.messages[self.offset :]):
+        for i, (role, msg) in enumerate(self.messages[self.offset:]):
             if i % 2 == 0:
+                # FIXED: Handle speech-only message format properly
                 if type(msg) is tuple:
-                    msg, image, image_process_mode = msg
-                    if type(image) != list:
-                        image = [image]
-                    if len(image) == 1:
-                        msg = "<image>\n" + msg.replace("<image>", "").strip()
+                    # Speech-only format: (text, audio) - extract text only
+                    if len(msg) >= 2:
+                        msg = msg[0]  # Get text part
                     else:
-                        msg = re.sub(r"(<image>)\n(?=<image>)", r"\1 ", msg)
-                    for img in image:
-                        img_b64_str = self.process_image(img, "Default", return_pil=False, image_format="JPEG")
-                        img_str = f'<img src="data:image/jpeg;base64,{img_b64_str}"/>'
-                        msg = msg.replace("<image>", img_str, 1).strip()
-                    if len(msg) > 0:
-                        ret.append([msg, None])
-                else:
-                    ret.append([msg, None])
+                        msg = str(msg[0]) if msg else ""
+                ret.append([msg, None])
             else:
                 ret[-1][-1] = msg
         return ret
 
     def copy(self):
-        return Conversation(system=self.system, roles=self.roles, messages=[[x, y] for x, y in self.messages], offset=self.offset, sep_style=self.sep_style, sep=self.sep, sep2=self.sep2, version=self.version, tokenizer=self.tokenizer, stop_token_ids=self.stop_token_ids)
+        return Conversation(
+            system=self.system,
+            roles=self.roles,
+            messages=[[x, y] for x, y in self.messages],
+            offset=self.offset,
+            sep_style=self.sep_style,
+            sep=self.sep,
+            sep2=self.sep2,
+            version=self.version,
+            tokenizer_id=self.tokenizer_id,
+            tokenizer=self.tokenizer,
+            stop_str=self.stop_str,
+            stop_token_ids=self.stop_token_ids,
+            skip_next=self.skip_next,
+        )
 
     def dict(self):
-        if len(self.get_images()) > 0:
-            return {
-                "system": self.system,
-                "roles": self.roles,
-                "messages": [[x, y[0] if type(y) is tuple else y] for x, y in self.messages],
-                "offset": self.offset,
-                "sep": self.sep,
-                "sep2": self.sep2,
-            }
+        # FIXED: Handle speech-only message format in serialization
+        messages = []
+        for role, msg in self.messages:
+            if type(msg) is tuple:
+                # Speech-only format: (text, audio) - serialize text only
+                if len(msg) >= 2:
+                    msg = msg[0]  # Get text part
+                else:
+                    msg = str(msg[0]) if msg else ""
+            messages.append([role, msg])
+            
         return {
             "system": self.system,
             "roles": self.roles,
-            "messages": self.messages,
+            "messages": messages,
             "offset": self.offset,
             "sep": self.sep,
             "sep2": self.sep2,
+            "version": self.version,
+            "tokenizer_id": self.tokenizer_id,
+            "stop_str": self.stop_str,
+            "stop_token_ids": self.stop_token_ids,
+            "skip_next": self.skip_next,
         }
 
 
+# Speech-only conversation templates
 conv_vicuna_v0 = Conversation(
-    system="A chat between a curious human and an artificial intelligence assistant. " "The assistant gives helpful, detailed, and polite answers to the human's questions.",
+    system="A chat between a curious human and an artificial assistant. "
+    "The assistant gives helpful, detailed, and polite answers to the human's questions.",
     roles=("Human", "Assistant"),
-    messages=[
-        ["Human", "What are the key differences between renewable and non-renewable energy sources?"],
-        [
-            "Assistant",
-            "Renewable energy sources are those that can be replenished naturally in a relatively "
-            "short amount of time, such as solar, wind, hydro, geothermal, and biomass. "
-            "Non-renewable energy sources, on the other hand, are finite and will eventually be "
-            "depleted, such as coal, oil, and natural gas. Here are some key differences between "
-            "renewable and non-renewable energy sources:\n"
-            "1. Availability: Renewable energy sources are virtually inexhaustible, while non-renewable "
-            "energy sources are finite and will eventually run out.\n"
-            "2. Environmental impact: Renewable energy sources have a much lower environmental impact "
-            "than non-renewable sources, which can lead to air and water pollution, greenhouse gas emissions, "
-            "and other negative effects.\n"
-            "3. Cost: Renewable energy sources can be more expensive to initially set up, but they typically "
-            "have lower operational costs than non-renewable sources.\n"
-            "4. Reliability: Renewable energy sources are often more reliable and can be used in more remote "
-            "locations than non-renewable sources.\n"
-            "5. Flexibility: Renewable energy sources are often more flexible and can be adapted to different "
-            "situations and needs, while non-renewable sources are more rigid and inflexible.\n"
-            "6. Sustainability: Renewable energy sources are more sustainable over the long term, while "
-            "non-renewable sources are not, and their depletion can lead to economic and social instability.\n",
-        ],
-    ],
-    offset=2,
+    messages=(),
+    offset=0,
     sep_style=SeparatorStyle.SINGLE,
     sep="###",
 )
 
 conv_vicuna_v1 = Conversation(
-    system="A chat between a curious user and an artificial intelligence assistant. " "The assistant gives helpful, detailed, and polite answers to the user's questions.",
+    system="A chat between a curious user and an artificial intelligence assistant. "
+    "The assistant gives helpful, detailed, and polite answers to the user's questions.",
     roles=("USER", "ASSISTANT"),
-    version="v1",
-    messages=[],
+    messages=(),
     offset=0,
     sep_style=SeparatorStyle.TWO,
     sep=" ",
@@ -339,141 +331,97 @@ conv_llama_2 = Conversation(
 
 If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.""",
     roles=("USER", "ASSISTANT"),
-    version="llama_v2",
-    messages=[],
+    messages=(),
     offset=0,
     sep_style=SeparatorStyle.LLAMA_2,
     sep="<s>",
     sep2="</s>",
 )
 
-conv_llava_llama_2 = Conversation(
-    system="You are a helpful speech-to-speech assistant. " "You are able to understand the speech content that the user provides, " "and assist the user with a variety of tasks using natural language.",
-    roles=("USER", "ASSISTANT"),
-    version="llama_v2",
-    messages=[],
-    offset=0,
-    sep_style=SeparatorStyle.LLAMA_2,
-    sep="<s>",
-    sep2="</s>",
-)
-
-# # This will lead to a bug when user can not access Meta-Llama-3-8B-Instruct
-def safe_load_tokenizer(tokenizer_id):
-    print("*"*20)
-    import os
-    print(os.getcwd())
-    print("*"*20)
-    try:
-        return AutoTokenizer.from_pretrained(tokenizer_id)
-    except Exception as e:
-        print(f"Encounter Error: {e}")
-        return None
-conv_llava_llama_3 = Conversation(
-    system="You are a helpful speech-to-speech assistant. " "You are able to understand the speech content that the user provides, " "and assist the user with a variety of tasks using natural language.",
+conv_llama_3 = Conversation(
+    system="""You are a helpful assistant.""",
     roles=("user", "assistant"),
-    version="llama_v3",
-    messages=[],
+    messages=(),
     offset=0,
-    sep="<|eot_id|>",
     sep_style=SeparatorStyle.LLAMA_3,
-    tokenizer_id="checkpoints/Llama-3.1-8B-S2S-Omni",
-    tokenizer=safe_load_tokenizer("checkpoints/Llama-3.1-8B-S2S-Omni"),
-    stop_token_ids=[128009],
+    sep="<s>",
+    sep2="</s>",
 )
 
-conv_mistral_instruct = Conversation(
+conv_qwen = Conversation(
+    system="You are a helpful assistant.",
+    roles=("user", "assistant"),
+    messages=(),
+    offset=0,
+    sep_style=SeparatorStyle.QWEN,
+    sep="<s>",
+    sep2="</s>",
+)
+
+conv_gemma_instruct = Conversation(
     system="",
-    roles=("USER", "ASSISTANT"),
-    version="llama_v2",
-    messages=[],
+    roles=("user", "model"),
+    messages=(),
     offset=0,
-    sep_style=SeparatorStyle.LLAMA_2,
+    sep_style=SeparatorStyle.GEMMA,
     sep="",
-    sep2="</s>",
+    sep2="",
 )
 
-conv_llava_llama_2_simple = Conversation(
-    system="Answer the questions about the speech content that the user provides.",
-    roles=("USER", "ASSISTANT"),
-    version="llama_v2",
-    messages=[],
+conv_chatml_direct = Conversation(
+    system="""<|im_start|>system
+You are a helpful assistant.<|im_end|>""",
+    roles=("<|im_start|>user", "<|im_start|>assistant"),
+    messages=(),
     offset=0,
-    sep_style=SeparatorStyle.LLAMA_2,
-    sep="<s>",
-    sep2="</s>",
-)
-
-conv_llava_llama_2_mmtag = Conversation(
-    system="Answer the questions about the speech content that the user provides." "The speech content will be provided with the following format: <Speech>speech content</Speech>.",
-    roles=("USER", "ASSISTANT"),
-    version="llama_v2_mmtag",
-    messages=[],
-    offset=0,
-    sep_style=SeparatorStyle.LLAMA_2,
-    sep="<s>",
-    sep2="</s>",
+    sep_style=SeparatorStyle.CHATML,
+    sep="<|im_end|>",
 )
 
 conv_mpt = Conversation(
     system="""<|im_start|>system
 A conversation between a user and an LLM-based AI assistant. The assistant gives helpful and honest answers.""",
     roles=("<|im_start|>user\n", "<|im_start|>assistant\n"),
-    version="mpt",
-    messages=[],
+    messages=(),
     offset=0,
     sep_style=SeparatorStyle.MPT,
     sep="<|im_end|>",
 )
 
-conv_qwen = Conversation(
-    system="""<|im_start|>system
-You are a helpful assistant.""",
-    roles=("<|im_start|>user", "<|im_start|>assistant"),
-    version="qwen",
-    messages=[],
-    offset=0,
-    sep_style=SeparatorStyle.CHATML,
-    sep="<|im_end|>",
-)
-
-conv_gemma_instruct = Conversation(system="", roles=("<start_of_turn>user\n", "<start_of_turn>model\n"), version="gemma", messages=[], offset=0, sep_style=SeparatorStyle.GEMMA, sep="<end_of_turn>\n")
-
 conv_llava_plain = Conversation(
     system="",
     roles=("", ""),
-    messages=[],
+    messages=(),
     offset=0,
     sep_style=SeparatorStyle.PLAIN,
     sep="\n",
 )
 
 conv_llava_v0 = Conversation(
-    system="A chat between a curious human and an artificial intelligence assistant. " "The assistant gives helpful, detailed, and polite answers to the human's questions.",
+    system="A chat between a curious human and an artificial intelligence assistant. "
+    "The assistant gives helpful, detailed, and polite answers to the human's questions.",
     roles=("Human", "Assistant"),
-    messages=[],
+    messages=(),
     offset=0,
     sep_style=SeparatorStyle.SINGLE,
     sep="###",
 )
 
 conv_llava_v0_mmtag = Conversation(
-    system="A chat between a curious user and an artificial intelligence assistant. "
-    "The assistant is able to understand the speech content that the user provides, and assist the user with a variety of tasks using natural language."
-    "The speech content will be provided with the following format: <Speech>speech content</Speech>.",
+    system="A chat between a curious human and an artificial intelligence assistant. "
+    "The assistant gives helpful, detailed, and polite answers to the human's questions.",
     roles=("Human", "Assistant"),
-    messages=[],
+    messages=(),
     offset=0,
     sep_style=SeparatorStyle.SINGLE,
     sep="###",
-    version="v0_mmtag",
 )
 
 conv_llava_v1 = Conversation(
-    system="A chat between a curious human and an artificial intelligence assistant. " "The assistant gives helpful, detailed, and polite answers to the human's questions.",
+    system="A chat between a curious human and an artificial intelligence assistant. "
+    "The assistant gives helpful, detailed, and polite answers to the human's questions.",
     roles=("USER", "ASSISTANT"),
-    version="v1",
-    messages=[],
+    messages=(),
     offset=0,
     sep_style=SeparatorStyle.TWO,
     sep=" ",
@@ -481,90 +429,41 @@ conv_llava_v1 = Conversation(
 )
 
 conv_llava_v1_mmtag = Conversation(
-    system="A chat between a curious user and an artificial intelligence assistant. "
-    "The assistant is able to understand the speech content that the user provides, and assist the user with a variety of tasks using natural language."
-    "The speech content will be provided with the following format: <Speech>speech content</Speech>.",
+    system="A chat between a curious human and an artificial intelligence assistant. "
+    "The assistant gives helpful, detailed, and polite answers to the human's questions.",
     roles=("USER", "ASSISTANT"),
-    messages=[],
+    messages=(),
     offset=0,
     sep_style=SeparatorStyle.TWO,
     sep=" ",
     sep2="</s>",
-    version="v1_mmtag",
 )
 
-conv_mistral_orca = Conversation(
-    system="""<|im_start|>system
-You are MistralOrca, a large language model trained by Alignment Lab AI. Write out your reasoning step-by-step to be sure you get the right answers!""",
-    roles=("<|im_start|>user\n", "<|im_start|>assistant\n"),
-    version="mpt",
-    messages=[],
-    offset=0,
-    sep_style=SeparatorStyle.MPT,
-    sep="<|im_end|>",
-)
-
-conv_mistral_zephyr = Conversation(
-    system="""<|system|>
-You are a helpful AI assistant.""",
-    roles=("<|user|>\n", "<|assistant|>\n"),
-    version="mpt",
-    messages=[],
-    offset=0,
-    sep_style=SeparatorStyle.MPT,
-    sep="</s>",
-)
-
-conv_mistral_direct = Conversation(
-    system="""<|im_start|>system
-Answer the questions.""",
-    roles=("<|im_start|>user\n", "<|im_start|>assistant\n"),
-    version="mpt",
-    messages=[],
-    offset=0,
-    sep_style=SeparatorStyle.MPT,
-    sep="<|im_end|>",
-)
-
-conv_chatml_direct = Conversation(
-    system="""<|im_start|>system
-Answer the questions.""",
-    roles=("<|im_start|>user\n", "<|im_start|>assistant\n"),
-    version="mpt",
-    messages=[],
-    offset=0,
-    sep_style=SeparatorStyle.MPT,
-    sep="<|im_end|>",
-)
-
-default_conversation = conv_vicuna_v0
+# Speech-only conversation templates
 conv_templates = {
     "default": conv_vicuna_v0,
     "v0": conv_vicuna_v0,
     "v1": conv_vicuna_v1,
     "vicuna_v1": conv_vicuna_v1,
     "llama_2": conv_llama_2,
-    "mistral_instruct": conv_mistral_instruct,
-    "mistral_orca": conv_mistral_orca,
-    "mistral_zephyr": conv_mistral_zephyr,
-    "mistral_direct": conv_mistral_direct,
-    "plain": conv_llava_plain,
-    "v0_plain": conv_llava_plain,
+    "llama_3": conv_llama_3,
+    "qwen": conv_qwen,
+    "gemma_instruct": conv_gemma_instruct,
     "chatml_direct": conv_chatml_direct,
+    "mistral_direct": conv_chatml_direct,
+    "plain": conv_llava_plain,
+    "llava_plain": conv_llava_plain,
     "llava_v0": conv_llava_v0,
     "llava_v0_mmtag": conv_llava_v0_mmtag,
     "llava_v1": conv_llava_v1,
     "llava_v1_mmtag": conv_llava_v1_mmtag,
-    "llava_llama_2": conv_llava_llama_2,
-    "llava_llama_3": conv_llava_llama_3,
-    "llava_llama_2_simple": conv_llava_llama_2_simple,
-    "llava_llama_2_mmtag": conv_llava_llama_2_mmtag,
-    "llava_mistral_instruct": conv_mistral_instruct,
     "mpt": conv_mpt,
-    "qwen_1_5": conv_qwen,
-    "gemma_instruct": conv_gemma_instruct,
 }
+
+# Default conversation for speech-only mode
+default_conversation = conv_vicuna_v1
 
 
 if __name__ == "__main__":
     print(default_conversation.get_prompt())
+
